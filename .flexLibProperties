@@ -9,6 +9,7 @@
     <classEntry path="com.dobuki.utils.TurboInfo"/>
     <classEntry path="com.dobuki.utils.BitmapInfo"/>
     <classEntry path="com.dobuki.utils.GlobalBitmapCache"/>
+    <classEntry path="com.dobuki.utils.TurboBitmap"/>
   </includeClasses>
   <includeResources/>
   <namespaceManifests/>

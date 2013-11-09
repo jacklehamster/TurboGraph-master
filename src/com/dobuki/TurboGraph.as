@@ -3,9 +3,9 @@
 	import com.dobuki.utils.BitmapInfo;
 	import com.dobuki.utils.Clock;
 	import com.dobuki.utils.GlobalBitmapCache;
+	import com.dobuki.utils.TurboBitmap;
 	import com.dobuki.utils.TurboInfo;
 	
-	import flash.display.Bitmap;
 	import flash.display.BitmapData;
 	import flash.display.DisplayObject;
 	import flash.display.DisplayObjectContainer;
@@ -26,6 +26,9 @@
 
 	public class TurboGraph
 	{
+		static private const SOFT:String = "soft";
+		static private const HARD:String = "hard";
+		
 		static private const BITMAP_LIFETIME:int = 30*1000;
 		static private var _instance:TurboGraph = new TurboGraph();
 		private var master:Sprite, _overlay:Sprite = new Sprite(), _debugOverlay:Sprite;
@@ -33,17 +36,19 @@
 		private var topOverlays:Vector.<Sprite> = new<Sprite> [ _overlay ];
 		static private var _active:Boolean;
 		static public var debugging:Boolean = false;
+		private var framesCounter:int = 0, timeFrame:int = 0, fps:Number = 0;
+		private var cleanupPending:String = null;
 		
 		static private const notransform:Matrix = new Matrix();
 		
-		private var recycle:Vector.< Bitmap> = new Vector.<Bitmap>();
+		private var recycle:Vector.<TurboBitmap> = new Vector.<TurboBitmap>();
 		private var now:int;
 		private var displayedElements:Dictionary = new Dictionary(true);
 		
 		public function TurboGraph()
 		{
 			_instance = this;
-			_overlay.mouseChildren = false;
+			_instance._overlay.mouseEnabled = _overlay.mouseChildren = false;
 			
 			dico[null] = dico[MovieClip] = dico[Sprite] = TurboInfo.EMPTY;
 		}
@@ -60,13 +65,6 @@
 			if(cursor && Mouse.cursor!=cursor) {
 				Mouse.cursor = cursor;
 			}
-			_instance._overlay.mouseEnabled = cursor != null;
-			if(cursor) {
-				Mouse.show();
-			}
-			else {
-				Mouse.hide();
-			}
 		}
 		
 		static public function debugArea(rect:Rectangle):void {
@@ -74,6 +72,10 @@
 		}
 		
 		private function cleanUp(soft:Boolean):void {
+			cleanupPending = soft?SOFT:HARD;;
+		}
+		
+		private function performPendingCleanup(soft:Boolean):void {
 			var info:TurboInfo, bitmapInfo:BitmapInfo;
 			var list:Array = [];
 			var count:int = 0, mergeCount:int = 0, reviveCount:int = 0;
@@ -128,10 +130,32 @@
 				}
 			}
 			
-			trace("Freed memory:",System.freeMemory-freeMem, "/",+(count+mergeCount)+" bitmaps ("+mergeCount+" merged)");
-			if(reviveCount) {
-				trace("Revived:",reviveCount);
+			//	removed bitmaps
+			var bitmapCount:int = 0, junk:int = 0;
+			for each(var bmp:TurboBitmap in displayedElements) {
+				recycleBitmap(bmp);
+				bitmapCount++;
 			}
+			displayedElements = new Dictionary(true);
+			for each(var overlay:Sprite in topOverlays) {
+				while(overlay.numChildren) {
+					overlay.removeChildAt(0);
+					junk++;
+				}
+			}
+			topOverlays = new<Sprite> [ _overlay ];
+			
+			//	clean debug overlay
+			if(_debugOverlay) {
+				_debugOverlay.graphics.clear();
+				if(_debugOverlay.parent) {
+					_debugOverlay.parent.removeChild(_debugOverlay);
+				}
+				_debugOverlay = null;
+			}
+			trace("Freed memory:",System.freeMemory-freeMem, "/",+(count+mergeCount)+" bitmaps ("+mergeCount+" merged)");
+			trace("Revived:",reviveCount);
+			trace("Removed bitmaps:",bitmapCount,junk);
 		}
 		
 		static public function cleanUp(soft:Boolean):void {
@@ -148,11 +172,16 @@
 		
 		static public function initialize(root:Sprite):void {
 			_instance.master = root;
-			_instance.master.addEventListener(Event.FRAME_CONSTRUCTED,_instance.loop);
+			_instance.master.addEventListener(Event.FRAME_CONSTRUCTED,_instance.redraw);
+			_instance.master.addEventListener(Event.RENDER,_instance.loop);
 			_instance.master.visible = !_active;
 			_instance.master.stage.addChild(_instance._overlay);
 			_instance._overlay.scrollRect = new Rectangle(0,0,_instance.stage.stageWidth,_instance.stage.stageHeight);
 			active = true;
+		}
+		
+		private function redraw(e:Event):void {
+			stage.invalidate()
 		}
 		
 		static public function get instance():TurboGraph {
@@ -171,45 +200,72 @@
 			return null;
 		}
 		
+		static public function get frameRate():Number {
+			return _instance.fps;
+		}
+		
 		private function loop(e:Event):void {
+			now = getTimer();
+			if(cleanupPending) {
+				if(_debugOverlay) {
+					_debugOverlay.graphics.clear();
+				}
+				performPendingCleanup(cleanupPending==SOFT);
+				cleanupPending = null;
+			}
+			
 			if(!_active)
 				return;
+			
+			framesCounter++;
+			if(now>timeFrame+1000) {
+				fps = Math.round(framesCounter / (now-timeFrame)*100*1000)/100;
+				timeFrame = now;
+				framesCounter = 0;
+			}
+			
 			
 			Clock.clockin("turbograph loop");
 			
 			//_overlay.graphics.clear();
 			//_overlay.graphics.lineStyle(1,0xFF0000);
-			
 			if(_debugOverlay) {
 				_debugOverlay.graphics.clear();
 			}
 			//drawCount = 0;
 			var oldDisplayedElements:Dictionary = displayedElements;
 			displayedElements = new Dictionary(true);
-			now = getTimer();
 			var sprites:Vector.<Sprite> = new Vector.<Sprite>();
 			dig(master,sprites);
 			process(sprites,oldDisplayedElements);
-			for each(var bmp:Bitmap in oldDisplayedElements) {
-				if(bmp.parent)
-					bmp.parent.removeChild(bmp);
-				recycle.push(bmp);
+			for each(var bmp:TurboBitmap in oldDisplayedElements) {
+				recycleBitmap(bmp);
 			}
-			
 			Clock.clockout("turbograph loop");
-			
+		}
+		
+		private function recycleBitmap(bmp:TurboBitmap):void {
+			bmp.snapshotIndex = null;
+			bmp.bitmapData = null;
+			bmp.parent.removeChild(bmp);
+			recycle.push(bmp);
 		}
 		
 		private function get debugOverlay():Sprite {
 			return _debugOverlay ? _debugOverlay : stage.addChild(_debugOverlay = new Sprite()) as Sprite;
 		}
 		
-		static public function getDisplay(sprite:Sprite):Bitmap {
+		static public function getDisplay(sprite:Sprite):TurboBitmap {
+			var snapshotIndex:String = _instance.getSnapshotIndex(sprite);
 			return _instance.displayedElements[sprite];
 		}
 		
+		private function getSnapshotIndex(sprite:Sprite):String {
+			return sprite is ICacheable ? (sprite as ICacheable).snapshotIndex : sprite is MovieClip ? (sprite as MovieClip).currentFrame.toString() : "0";
+		}
+		
 		static public function debugDisplay(displayObject:DisplayObject,color:uint):void {
-			var rect:Rectangle = displayObject.getBounds(_instance.master);
+			var rect:Rectangle = displayObject.getRect(_instance.master);
 			_instance.debugOverlay.graphics.lineStyle(1,color);
 			_instance.debugOverlay.graphics.drawRect(rect.x,rect.y,rect.width,rect.height);
 		}
@@ -221,24 +277,30 @@
 			
 			var Constructor:Class = Object(container).constructor;
 			var info:TurboInfo = dico[Constructor];
-			
 			if(!info) {
 				info = TurboInfo.EMPTY;
 				if(container is Sprite) {
+					var cacheSprite:CacheSprite = null;
 					for(var i:int=0;i<container.numChildren;i++) {
-						var child:DisplayObject = container.getChildAt(i);
-						if(child is CacheSprite) {
-							info = new TurboInfo(
-								Constructor,
-								child as CacheSprite,
-								child.getBounds(container),
-								child is CacheBox,
-								{}
-							);
+						var child:CacheSprite = container.getChildAt(i) as CacheSprite;
+						if(child) {
+							if(!cacheSprite || child is CacheBox) {
+								cacheSprite = child;
+							}
 							child.visible = false;
 							break;
 						}
 					}
+					if(cacheSprite) {
+						info = new TurboInfo(
+							Constructor,
+							cacheSprite,
+							cacheSprite.getBounds(container),
+							cacheSprite is CacheBox,
+							{}
+						);
+					}
+					
 					dico[Constructor] = info;
 				}
 			}
@@ -258,73 +320,63 @@
 		
 		private function process(sprites:Vector.<Sprite>,oldDisplayedElements:Dictionary):void {
 			
-			for each(var sprite:Sprite in sprites) {
+			for (var i:int=0; i<sprites.length; i++) {
+				var sprite:Sprite = sprites[i];
 				var Constructor:Class = Object(sprite).constructor;
 				var info:TurboInfo = dico[Constructor];
 				
 				var topIndex:int = sprite is ITopMost ? (sprite as ITopMost).index : 0;
 				var overlay:Sprite = getTopOverlay(topIndex);
 				
-				var mc:MovieClip = sprite as MovieClip;
-				var rect:Rectangle = mc.getBounds(master);
-				if(rect.width && rect.height && _instance._overlay.scrollRect.intersects(rect)) {
-					var snapshotIndex:String = (mc is ICacheable) ? (mc as ICacheable).snapshotIndex :  mc.currentFrame.toString();
-					var bitmapInfo:BitmapInfo = info.frames[snapshotIndex];
-					if(!bitmapInfo) {
-						var bounds:Rectangle = !info.isBox ? mc.getBounds(mc) : info.mcrect;
-						if(!bounds.width || !bounds.height) {
-							return;
-						}
-						
-						bitmapInfo = new BitmapInfo(info,snapshotIndex,new BitmapData(bounds.width,bounds.height,true,0));
-						bitmapInfo.bitmapData.draw(mc,new Matrix(1,0,0,1,-bounds.left,-bounds.top),null,null,null,true);
-						info.frames[snapshotIndex] = bitmapInfo;
-						info.count++;
-						
-						if(debugging) {
-							debugOverlay.graphics.lineStyle(1,0xFF0000);
-							debugOverlay.graphics.drawRect(rect.x,rect.y,rect.width,rect.height);
-						}
+				var snapshotIndex:String = getSnapshotIndex(sprite);
+				var bitmapInfo:BitmapInfo = info.frames[snapshotIndex];
+				if(!bitmapInfo) {
+					var bounds:Rectangle = !info.isBox ? sprite.getBounds(sprite) : info.mcrect;
+					if(!bounds.width || !bounds.height) {
+						continue;
 					}
 					
-					var bmp:Bitmap = oldDisplayedElements[sprite] as Bitmap;
-					if(bmp) {
-						delete oldDisplayedElements[sprite];
+					bitmapInfo = new BitmapInfo(info,snapshotIndex,new BitmapData(bounds.width,bounds.height,true,0));
+					bitmapInfo.bitmapData.draw(sprite,new Matrix(1,0,0,1,-bounds.left,-bounds.top),null,null,null,true);
+					info.frames[snapshotIndex] = bitmapInfo;
+					info.count++;
+					if(debugging)
+						debugDisplay(sprite,0xFF6600);
+				}
+				
+				var bmp:TurboBitmap = oldDisplayedElements[sprite] as TurboBitmap;
+				if(bmp && bmp.snapshotIndex==snapshotIndex) {
+					delete oldDisplayedElements[sprite];
+				}
+				else {
+					bmp = recycle.pop();
+					if(!bmp) {
+						bmp = new TurboBitmap(bitmapInfo.bitmapData,PixelSnapping.ALWAYS,false,snapshotIndex);
 					}
-					else {
-						bmp = recycle.pop();
-						if(!bmp) {
-							bmp = new Bitmap(bitmapInfo.bitmapData,PixelSnapping.ALWAYS);
-						}
-					}
+				}
 					
-					overlay.addChild(bmp);
-					if(bmp.bitmapData != bitmapInfo.bitmapData)
-						bmp.bitmapData = bitmapInfo.bitmapData;
-					if(!info.isBox) {
-						bmp.transform.matrix = notransform;
-						bmp.x = (rect.x);
-						bmp.y = (rect.y);
-						var dwidth:Number = bmp.width-rect.width;
-						var dheight:Number = bmp.height-rect.height;
-						if(dwidth<-1 || dwidth>1 || dheight<-1 || dheight>1) {
-							bmp.width = rect.width;
-							bmp.height = rect.height;
-						}
-					}
-					else {
-						var point:Point = mc.localToGlobal(info.mcrect.topLeft);
-						var transformMatrix:Matrix = mc.transform.concatenatedMatrix;
-						bmp.transform.matrix = transformMatrix;
-						bmp.x = (point.x);
-						bmp.y = (point.y);
-					}
-					bitmapInfo.lastUsed = now;
-					if(bitmapInfo.md5) {
-						(BitmapInfo.globalBitmapCache[bitmapInfo.md5] as GlobalBitmapCache).lastUsed = now; 
-					}
-					displayedElements[mc] = bmp;
-				}				
+				overlay.addChild(bmp);
+				if(bmp.bitmapData != bitmapInfo.bitmapData)
+					bmp.bitmapData = bitmapInfo.bitmapData;
+				
+				var rect:Rectangle = info.isBox ? info.mcrect: sprite.getRect(sprite);
+				var point:Point = sprite.localToGlobal(rect.topLeft);
+					
+				
+				var transformMatrix:Matrix = sprite.transform.concatenatedMatrix;
+				bmp.transform.matrix = transformMatrix;
+				bmp.x = (point.x);
+				bmp.y = (point.y);
+				
+				if(debugging) {
+					debugDisplay(sprite,info.isBox?0x00FFFF:0xFFFF00);
+				}
+				
+				bitmapInfo.lastUsed = now;
+				if(bitmapInfo.md5) {
+					(BitmapInfo.globalBitmapCache[bitmapInfo.md5] as GlobalBitmapCache).lastUsed = now; 
+				}
+				displayedElements[sprite] = bmp;
 			}
 		}		
 	}
