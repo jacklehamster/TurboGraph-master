@@ -75,41 +75,42 @@
 			cleanupPending = soft?SOFT:HARD;;
 		}
 		
+		private function cleanDuplicate(bitmapInfo:BitmapInfo):void {
+			if(!bitmapInfo.md5) {
+				bitmapInfo.md5 = MD5.hashBytes(bitmapInfo.bitmapData.getPixels(bitmapInfo.bitmapData.rect));
+				var globalCache:GlobalBitmapCache = BitmapInfo.globalBitmapCache[bitmapInfo.md5];
+				if(globalCache && globalCache.bitmapData) {
+					bitmapInfo.bitmapData.dispose();
+					bitmapInfo.bitmapData = globalCache.bitmapData;
+				}
+				else if(globalCache) {
+					globalCache.revived++;
+					globalCache.bitmapInfos = new Vector.<BitmapInfo>();
+					globalCache.bitmapData = bitmapInfo.bitmapData;
+				}
+				else {
+					globalCache = new GlobalBitmapCache(bitmapInfo.bitmapData);
+					BitmapInfo.globalBitmapCache[bitmapInfo.md5] = globalCache;
+				}
+				globalCache.bitmapInfos.push(bitmapInfo);
+				if(bitmapInfo.lastUsed>globalCache.lastUsed)
+					globalCache.lastUsed = bitmapInfo.lastUsed;
+			}
+		}
+		
 		private function performPendingCleanup(soft:Boolean):void {
 			var info:TurboInfo, bitmapInfo:BitmapInfo;
 			var list:Array = [];
-			var count:int = 0, mergeCount:int = 0, reviveCount:int = 0;
 			for each (info in dico) {
 				if(info.Constructor) {
 					for each(bitmapInfo in info.frames) {
 						list.push(bitmapInfo);
-						if(!bitmapInfo.md5) {
-							bitmapInfo.md5 = MD5.hashBytes(bitmapInfo.bitmapData.getPixels(bitmapInfo.bitmapData.rect));
-							var globalCache:GlobalBitmapCache = BitmapInfo.globalBitmapCache[bitmapInfo.md5];
-							if(globalCache && globalCache.bitmapData) {
-								bitmapInfo.bitmapData.dispose();
-								bitmapInfo.bitmapData = globalCache.bitmapData;
-								mergeCount++;
-							}
-							else if(globalCache) {
-								reviveCount++;
-								globalCache.revived++;
-								globalCache.bitmapInfos = new Vector.<BitmapInfo>();
-								globalCache.bitmapData = bitmapInfo.bitmapData;
-							}
-							else {
-								globalCache = new GlobalBitmapCache(bitmapInfo.bitmapData);
-								BitmapInfo.globalBitmapCache[bitmapInfo.md5] = globalCache;
-							}
-							globalCache.bitmapInfos.push(bitmapInfo);
-							if(bitmapInfo.lastUsed>globalCache.lastUsed)
-								globalCache.lastUsed = bitmapInfo.lastUsed;
-						}
+						cleanDuplicate(bitmapInfo)
 					}
 				}
 			};
 			
-			var freeMem:int = System.freeMemory;
+			var globalCache:GlobalBitmapCache;
 			for (var md5:String in BitmapInfo.globalBitmapCache) {
 				globalCache = BitmapInfo.globalBitmapCache[md5];
 				if(globalCache.bitmapData) {
@@ -125,22 +126,18 @@
 						globalCache.bitmapInfos = null;
 						globalCache.bitmapData.dispose();
 						globalCache.bitmapData = null;
-						count++;
 					}
 				}
 			}
 			
 			//	removed bitmaps
-			var bitmapCount:int = 0, junk:int = 0;
 			for each(var bmp:TurboBitmap in displayedElements) {
 				recycleBitmap(bmp);
-				bitmapCount++;
 			}
 			displayedElements = new Dictionary(true);
 			for each(var overlay:Sprite in topOverlays) {
 				while(overlay.numChildren) {
 					overlay.removeChildAt(0);
-					junk++;
 				}
 			}
 			topOverlays = new<Sprite> [ _overlay ];
@@ -153,9 +150,6 @@
 				}
 				_debugOverlay = null;
 			}
-			trace("Freed memory:",System.freeMemory-freeMem, "/",+(count+mergeCount)+" bitmaps ("+mergeCount+" merged)");
-			trace("Revived:",reviveCount);
-			trace("Removed bitmaps:",bitmapCount,junk);
 		}
 		
 		static public function cleanUp(soft:Boolean):void {
@@ -318,6 +312,22 @@
 			}
 		}
 		
+		private function createBitmapInfo(sprite:Sprite,info:TurboInfo,snapshotIndex:String):BitmapInfo {
+			var bounds:Rectangle = !info.isBox ? sprite.getBounds(sprite) : info.mcrect;
+			if(!bounds.width || !bounds.height) {
+				return null;
+			}
+			
+			var bitmapInfo:BitmapInfo = new BitmapInfo(info,snapshotIndex,new BitmapData(bounds.width,bounds.height,true,0));
+			bitmapInfo.bitmapData.draw(sprite,new Matrix(1,0,0,1,-bounds.left,-bounds.top),null,null,null,true);
+			info.frames[snapshotIndex] = bitmapInfo;
+			info.count++;
+			cleanDuplicate(bitmapInfo);
+			if(debugging)
+				debugDisplay(sprite,0xFF6600);
+			return bitmapInfo;
+		}
+		
 		private function process(sprites:Vector.<Sprite>,oldDisplayedElements:Dictionary):void {
 			
 			for (var i:int=0; i<sprites.length; i++) {
@@ -331,17 +341,9 @@
 				var snapshotIndex:String = getSnapshotIndex(sprite);
 				var bitmapInfo:BitmapInfo = info.frames[snapshotIndex];
 				if(!bitmapInfo) {
-					var bounds:Rectangle = !info.isBox ? sprite.getBounds(sprite) : info.mcrect;
-					if(!bounds.width || !bounds.height) {
+					bitmapInfo = createBitmapInfo(sprite,info,snapshotIndex);
+					if(!bitmapInfo)
 						continue;
-					}
-					
-					bitmapInfo = new BitmapInfo(info,snapshotIndex,new BitmapData(bounds.width,bounds.height,true,0));
-					bitmapInfo.bitmapData.draw(sprite,new Matrix(1,0,0,1,-bounds.left,-bounds.top),null,null,null,true);
-					info.frames[snapshotIndex] = bitmapInfo;
-					info.count++;
-					if(debugging)
-						debugDisplay(sprite,0xFF6600);
 				}
 				
 				var bmp:TurboBitmap = oldDisplayedElements[sprite] as TurboBitmap;
