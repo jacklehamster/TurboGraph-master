@@ -17,7 +17,6 @@
 	import flash.geom.Matrix;
 	import flash.geom.Point;
 	import flash.geom.Rectangle;
-	import flash.system.System;
 	import flash.ui.Mouse;
 	import flash.utils.Dictionary;
 	import flash.utils.getTimer;
@@ -42,8 +41,8 @@
 		static private const notransform:Matrix = new Matrix();
 		
 		private var recycle:Vector.<TurboBitmap> = new Vector.<TurboBitmap>();
-		private var now:int;
 		private var displayedElements:Dictionary = new Dictionary(true);
+		private var now:int;
 		
 		public function TurboGraph()
 		{
@@ -110,9 +109,8 @@
 				}
 			};
 			
-			var globalCache:GlobalBitmapCache;
 			for (var md5:String in BitmapInfo.globalBitmapCache) {
-				globalCache = BitmapInfo.globalBitmapCache[md5];
+				var globalCache:GlobalBitmapCache = BitmapInfo.globalBitmapCache[md5];
 				if(globalCache.bitmapData) {
 					if(!soft || now - globalCache.lastUsed > (1+globalCache.revived) * BITMAP_LIFETIME) {
 						for each(bitmapInfo in globalCache.bitmapInfos) {
@@ -166,7 +164,7 @@
 		
 		static public function initialize(root:Sprite):void {
 			_instance.master = root;
-			_instance.master.addEventListener(Event.FRAME_CONSTRUCTED,_instance.redraw);
+			_instance.master.addEventListener(Event.ENTER_FRAME,_instance.redraw);
 			_instance.master.addEventListener(Event.RENDER,_instance.loop);
 			_instance.master.visible = !_active;
 			_instance.master.stage.addChild(_instance._overlay);
@@ -221,14 +219,12 @@
 			
 			Clock.clockin("turbograph loop");
 			
-			//_overlay.graphics.clear();
-			//_overlay.graphics.lineStyle(1,0xFF0000);
 			if(_debugOverlay) {
 				_debugOverlay.graphics.clear();
 			}
-			//drawCount = 0;
 			var oldDisplayedElements:Dictionary = displayedElements;
 			displayedElements = new Dictionary(true);
+			oldDisplayedElements
 			var sprites:Vector.<Sprite> = new Vector.<Sprite>();
 			dig(master,sprites);
 			process(sprites,oldDisplayedElements);
@@ -286,11 +282,12 @@
 						}
 					}
 					if(cacheSprite) {
+						var isCacheBox:Boolean = cacheSprite is CacheBox;
 						info = new TurboInfo(
 							Constructor,
 							cacheSprite,
-							cacheSprite.getBounds(container),
-							cacheSprite is CacheBox,
+							isCacheBox ? cacheSprite.getBounds(container) : null,
+							isCacheBox,
 							{}
 						);
 					}
@@ -318,11 +315,12 @@
 				return null;
 			}
 			
-			var bitmapInfo:BitmapInfo = new BitmapInfo(info,snapshotIndex,new BitmapData(bounds.width,bounds.height,true,0));
-			bitmapInfo.bitmapData.draw(sprite,new Matrix(1,0,0,1,-bounds.left,-bounds.top),null,null,null,true);
+			var bitmapInfo:BitmapInfo = new BitmapInfo(info,snapshotIndex,now,new BitmapData(bounds.width,bounds.height,true,0));
+			bitmapInfo.bitmapData.draw(sprite,new Matrix(1,0,0,1,-bounds.left,-bounds.top),sprite.transform.concatenatedColorTransform,null,null,true);
+			cleanDuplicate(bitmapInfo);
+			bitmapInfo.rect = bounds;
 			info.frames[snapshotIndex] = bitmapInfo;
 			info.count++;
-			cleanDuplicate(bitmapInfo);
 			if(debugging)
 				debugDisplay(sprite,0xFF6600);
 			return bitmapInfo;
@@ -339,7 +337,7 @@
 				var overlay:Sprite = getTopOverlay(topIndex);
 				
 				var snapshotIndex:String = getSnapshotIndex(sprite);
-				var bitmapInfo:BitmapInfo = info.frames[snapshotIndex];
+				var bitmapInfo:BitmapInfo = snapshotIndex ? info.frames[snapshotIndex] : null;
 				if(!bitmapInfo) {
 					bitmapInfo = createBitmapInfo(sprite,info,snapshotIndex);
 					if(!bitmapInfo)
@@ -353,7 +351,7 @@
 				else {
 					bmp = recycle.pop();
 					if(!bmp) {
-						bmp = new TurboBitmap(bitmapInfo.bitmapData,PixelSnapping.ALWAYS,false,snapshotIndex);
+						bmp = new TurboBitmap(bitmapInfo.bitmapData,PixelSnapping.AUTO,true,snapshotIndex);
 					}
 				}
 					
@@ -361,7 +359,7 @@
 				if(bmp.bitmapData != bitmapInfo.bitmapData)
 					bmp.bitmapData = bitmapInfo.bitmapData;
 				
-				var rect:Rectangle = info.isBox ? info.mcrect: sprite.getRect(sprite);
+				var rect:Rectangle = bitmapInfo.rect;
 				var point:Point = sprite.localToGlobal(rect.topLeft);
 					
 				
@@ -374,10 +372,9 @@
 					debugDisplay(sprite,info.isBox?0x00FFFF:0xFFFF00);
 				}
 				
-				bitmapInfo.lastUsed = now;
-				if(bitmapInfo.md5) {
-					(BitmapInfo.globalBitmapCache[bitmapInfo.md5] as GlobalBitmapCache).lastUsed = now; 
-				}
+				var timestamp:int = bitmapInfo.snapshotIndex ? now : 0;	//	dispose immediately if we don't have a snapshotIndex
+				bitmapInfo.lastUsed = timestamp;
+				(BitmapInfo.globalBitmapCache[bitmapInfo.md5] as GlobalBitmapCache).lastUsed = timestamp; 
 				displayedElements[sprite] = bmp;
 			}
 		}		

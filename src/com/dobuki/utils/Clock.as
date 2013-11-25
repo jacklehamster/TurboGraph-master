@@ -18,7 +18,7 @@ package com.dobuki.utils
 			return 0;
 		}
 		
-		static public var active:Boolean = true;
+		static public var active:Boolean = false;
 
 		static public function clockin(id:String):void {
 			if(!active)
