@@ -1,4 +1,23 @@
-﻿package com.dobuki
+﻿/*
+
+Copyright (C) 2013 Vincent Le Quang
+
+This program is free software; you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation;
+either version 2 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program;
+if not, write to the Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+Contact : vincentlequang@gmail.com
+
+*/
+
+package com.dobuki
 {
 	import com.dobuki.utils.BitmapInfo;
 	import com.dobuki.utils.Clock;
@@ -25,6 +44,31 @@
 	
 	import by.blooddy.crypto.MD5;
 
+	/**	▇ ▅ █ ▅ ▇ ▂ ▃ ▁ ▁ ▅ ▃ ▅ ▅ ▄ ▅ ▇ ▇ ▅ █ ▅ ▇ ▂ ▃ ▁ ▁ ▅ ▃ ▅ ▅ ▄ 
+	 **		TURBOGRAPH
+	 ** This main class is your access to the engine. It contains the code that does all the processing (digging for cached MovieClip
+	 *  by traversing the display list, then processing them all into a flatten overlay that contains bitmap).
+	 * 	To use TurboGraph, simply call: TurboGraph.initialize(root);
+	 * 	This will make the root invisible, another layer will be created on the stage containing all bitmaps.
+	 * 	Some optional features:
+	 * 	- TurboGraph.addEventListener(TurboEvent.NEW_BITMAP,callback): This lets you detect when a new BitmapData has been created. It will
+	 * 		not fired if a BitmatData has been detected as duplicate, and thus got removed immediately.
+	 * 	- TurboGraph.active: You can turn TurboGraph on/off while it's running. This is useful to compare performance. TurboGraph is on by default
+	 * 	- TurboGraph.debugging: In debug mode, you can see an overlay of rectangles indicating newly created bitmaps
+	 *  - TurboGraph.colorTransformMode: If a cached MovieClip has been colored (through ColorTransform, not filter), then the engine
+	 * 		can either apply it into the cached image upon drawing, or dynamically apply it to the bitmap.
+	 * 		The colorTransform can also be ignored. By default, we apply the colorTransform upon drawing, which is the most performant.
+	 * 		If the colorTransform will keep changing (like if you constantly change the alpha of MovieClips), then you should set this
+	 * 		to COLORTRANSFORM_MODE_DYNAMIC.
+	 *  - TurboGraph.showCursor: It's a helper function for changing the cursor. It didn't have to be there, but I found it useful personally.
+	 *  - TurboGraph.frameRate: Returns the calculated frame per second.
+	 * 	- TurboGraph.overlays / TurboGraph.getTopOverlay: This gives you access to the layer that holds all bitmaps
+	 *  - TurboGraph.getDisplay: Pass the cached sprite as argument, the engine will return the corresponding bitmap
+	 *  - TurboGraph.debugDisplay: Lets you draw your own rectangles in the engine's debug overlay
+	 *  - TurboGraph.replaceBitmap: Lets you replace all instance of an image with a different image (using the md5 hash of the
+	 * 		original image. This is useful if you want to reskin an application but don't want to mess with the Flash assets. You
+	 * 		can just map all bitmaps to a different image.
+	 **/
 	[Event(name="newBitmap", type="flash.events.TurboEvent")]
 	public class TurboGraph extends EventDispatcher
 	{
@@ -88,6 +132,32 @@
 			}
 		}
 		
+		static public function cleanUp(soft:Boolean):void {
+			_instance.cleanUp(soft);
+		}
+		
+		static public function set active(value:Boolean):void {
+			instance._active = value;
+			if(_instance && _instance.master) {
+				_instance.master.visible = !instance._active;
+				for each(var overlay:Sprite in _instance.topOverlays) {
+					overlay.visible = instance._active;
+				}
+			}
+		}
+		
+		static public function initialize(root:Sprite):void {
+			_instance.master = root;
+			_instance.master.addEventListener(Event.ENTER_FRAME,_instance.redraw);
+			_instance.master.addEventListener(Event.RENDER,_instance.loop);
+			_instance.master.visible = !instance._active;
+			active = true;
+		}
+		
+		static public function get overlays():Vector.<Sprite> {
+			return _instance.topOverlays;
+		}
+		
 		private function cleanUp(soft:Boolean):void {
 			cleanupPending = soft?SOFT:HARD;;
 		}
@@ -141,32 +211,6 @@
 				}
 				_debugOverlay = null;
 			}
-		}
-		
-		static public function cleanUp(soft:Boolean):void {
-			_instance.cleanUp(soft);
-		}
-		
-		static public function set active(value:Boolean):void {
-			instance._active = value;
-			if(_instance && _instance.master) {
-				_instance.master.visible = !instance._active;
-				for each(var overlay:Sprite in _instance.topOverlays) {
-					overlay.visible = instance._active;
-				}
-			}
-		}
-		
-		static public function initialize(root:Sprite):void {
-			_instance.master = root;
-			_instance.master.addEventListener(Event.ENTER_FRAME,_instance.redraw);
-			_instance.master.addEventListener(Event.RENDER,_instance.loop);
-			_instance.master.visible = !instance._active;
-			active = true;
-		}
-		
-		static public function get overlays():Vector.<Sprite> {
-			return _instance.topOverlays;
 		}
 		
 		private function redraw(e:Event):void {

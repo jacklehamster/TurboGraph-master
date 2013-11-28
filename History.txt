@@ -1,0 +1,5 @@
+v1.0.0
+This is the first history file, so it starts with everything.
+- Engine that digs for MovieClips in a display hierarchy and produces a flatten layer of bitmaps
+- Allows really fast performance for gaming
+- Some added features for re-skinning an app
