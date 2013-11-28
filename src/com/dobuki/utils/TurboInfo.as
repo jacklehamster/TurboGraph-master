@@ -12,7 +12,6 @@ package com.dobuki.utils
 		public var frames:Object;
 		public var count:int = 0;
 		public var Constructor:Class;
-		public var framesMD5:String;
 		
 		static public const EMPTY:TurboInfo = new TurboInfo(null,null,null,false,null);
 		

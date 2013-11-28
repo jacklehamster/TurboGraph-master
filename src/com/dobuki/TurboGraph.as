@@ -14,6 +14,8 @@
 	import flash.display.Sprite;
 	import flash.display.Stage;
 	import flash.events.Event;
+	import flash.events.EventDispatcher;
+	import flash.geom.ColorTransform;
 	import flash.geom.Matrix;
 	import flash.geom.Point;
 	import flash.geom.Rectangle;
@@ -23,31 +25,35 @@
 	
 	import by.blooddy.crypto.MD5;
 
-	public class TurboGraph
+	[Event(name="newBitmap", type="flash.events.TurboEvent")]
+	public class TurboGraph extends EventDispatcher
 	{
 		static private const SOFT:String = "soft";
 		static private const HARD:String = "hard";
 		
+		static public const COLORTRANSFORM_MODE_IGNORE:String = "ignore";
+		static public const COLORTRANSFORM_MODE_DYNAMIC:String = "dynamic";
+		static public const COLORTRANSFORM_MODE_CACHED:String = "cached";
+		
 		static private const BITMAP_LIFETIME:int = 30*1000;
 		static private var _instance:TurboGraph = new TurboGraph();
-		private var master:Sprite, _overlay:Sprite = new Sprite(), _debugOverlay:Sprite;
+		private var master:Sprite, _debugOverlay:Sprite;
 		private var dico:Dictionary = new Dictionary();
-		private var topOverlays:Vector.<Sprite> = new<Sprite> [ _overlay ];
-		static private var _active:Boolean;
-		static public var debugging:Boolean = false;
+		private var topOverlays:Vector.<Sprite> = new<Sprite> [ ];
+		private var _active:Boolean = false,debugging:Boolean = false;
 		private var framesCounter:int = 0, timeFrame:int = 0, fps:Number = 0;
+		private var now:int = 0;
 		private var cleanupPending:String = null;
+		private var _colorTransformMode:String = COLORTRANSFORM_MODE_CACHED;
 		
 		static private const notransform:Matrix = new Matrix();
 		
 		private var recycle:Vector.<TurboBitmap> = new Vector.<TurboBitmap>();
-		private var displayedElements:Dictionary = new Dictionary(true);
-		private var now:int;
+		private var displayedElements:Dictionary = new Dictionary();
 		
 		public function TurboGraph()
 		{
 			_instance = this;
-			_instance._overlay.mouseEnabled = _overlay.mouseChildren = false;
 			
 			dico[null] = dico[MovieClip] = dico[Sprite] = TurboInfo.EMPTY;
 		}
@@ -57,7 +63,23 @@
 		}
 		
 		static public function get active():Boolean {
-			return _active;
+			return _instance._active;
+		}
+		
+		static public function get debugging():Boolean {
+			return _instance.debugging;
+		}
+		
+		static public function set debugging(value:Boolean):void {
+			_instance.debugging = value;
+		}
+		
+		static public function set colorTransformMode(value:String):void {
+			_instance._colorTransformMode = value;
+		}
+		
+		static public function get colorTransformMode():String {
+			return _instance._colorTransformMode;
 		}
 		
 		static public function showCursor(cursor:String):void {
@@ -66,35 +88,8 @@
 			}
 		}
 		
-		static public function debugArea(rect:Rectangle):void {
-			
-		}
-		
 		private function cleanUp(soft:Boolean):void {
 			cleanupPending = soft?SOFT:HARD;;
-		}
-		
-		private function cleanDuplicate(bitmapInfo:BitmapInfo):void {
-			if(!bitmapInfo.md5) {
-				bitmapInfo.md5 = MD5.hashBytes(bitmapInfo.bitmapData.getPixels(bitmapInfo.bitmapData.rect));
-				var globalCache:GlobalBitmapCache = BitmapInfo.globalBitmapCache[bitmapInfo.md5];
-				if(globalCache && globalCache.bitmapData) {
-					bitmapInfo.bitmapData.dispose();
-					bitmapInfo.bitmapData = globalCache.bitmapData;
-				}
-				else if(globalCache) {
-					globalCache.revived++;
-					globalCache.bitmapInfos = new Vector.<BitmapInfo>();
-					globalCache.bitmapData = bitmapInfo.bitmapData;
-				}
-				else {
-					globalCache = new GlobalBitmapCache(bitmapInfo.bitmapData);
-					BitmapInfo.globalBitmapCache[bitmapInfo.md5] = globalCache;
-				}
-				globalCache.bitmapInfos.push(bitmapInfo);
-				if(bitmapInfo.lastUsed>globalCache.lastUsed)
-					globalCache.lastUsed = bitmapInfo.lastUsed;
-			}
 		}
 		
 		private function performPendingCleanup(soft:Boolean):void {
@@ -104,7 +99,6 @@
 				if(info.Constructor) {
 					for each(bitmapInfo in info.frames) {
 						list.push(bitmapInfo);
-						cleanDuplicate(bitmapInfo)
 					}
 				}
 			};
@@ -114,7 +108,6 @@
 				if(globalCache.bitmapData) {
 					if(!soft || now - globalCache.lastUsed > (1+globalCache.revived) * BITMAP_LIFETIME) {
 						for each(bitmapInfo in globalCache.bitmapInfos) {
-							bitmapInfo.bitmapData = null;
 							delete bitmapInfo.owner.frames[bitmapInfo.snapshotIndex];
 							bitmapInfo.owner.count--;
 							if(!bitmapInfo.owner.count) {
@@ -132,13 +125,13 @@
 			for each(var bmp:TurboBitmap in displayedElements) {
 				recycleBitmap(bmp);
 			}
-			displayedElements = new Dictionary(true);
+			displayedElements = new Dictionary();
 			for each(var overlay:Sprite in topOverlays) {
 				while(overlay.numChildren) {
 					overlay.removeChildAt(0);
 				}
 			}
-			topOverlays = new<Sprite> [ _overlay ];
+			topOverlays = new<Sprite> [ ];
 			
 			//	clean debug overlay
 			if(_debugOverlay) {
@@ -155,10 +148,12 @@
 		}
 		
 		static public function set active(value:Boolean):void {
-			_active = value;
+			instance._active = value;
 			if(_instance && _instance.master) {
-				_instance.master.visible = !_active;
-				_instance._overlay.visible = _active;
+				_instance.master.visible = !instance._active;
+				for each(var overlay:Sprite in _instance.topOverlays) {
+					overlay.visible = instance._active;
+				}
 			}
 		}
 		
@@ -166,10 +161,12 @@
 			_instance.master = root;
 			_instance.master.addEventListener(Event.ENTER_FRAME,_instance.redraw);
 			_instance.master.addEventListener(Event.RENDER,_instance.loop);
-			_instance.master.visible = !_active;
-			_instance.master.stage.addChild(_instance._overlay);
-			_instance._overlay.scrollRect = new Rectangle(0,0,_instance.stage.stageWidth,_instance.stage.stageHeight);
+			_instance.master.visible = !instance._active;
 			active = true;
+		}
+		
+		static public function get overlays():Vector.<Sprite> {
+			return _instance.topOverlays;
 		}
 		
 		private function redraw(e:Event):void {
@@ -184,6 +181,8 @@
 			if(master) {
 				while(topOverlays.length<=index) {
 					var overlay:Sprite = new Sprite();
+					overlay.mouseEnabled = overlay.mouseChildren = false;
+
 					stage.addChild(overlay);
 					topOverlays.push(overlay);
 				}
@@ -222,15 +221,16 @@
 			if(_debugOverlay) {
 				_debugOverlay.graphics.clear();
 			}
+			
 			var oldDisplayedElements:Dictionary = displayedElements;
-			displayedElements = new Dictionary(true);
-			oldDisplayedElements
+			displayedElements = new Dictionary();
 			var sprites:Vector.<Sprite> = new Vector.<Sprite>();
 			dig(master,sprites);
 			process(sprites,oldDisplayedElements);
 			for each(var bmp:TurboBitmap in oldDisplayedElements) {
 				recycleBitmap(bmp);
 			}
+			
 			Clock.clockout("turbograph loop");
 		}
 		
@@ -309,15 +309,23 @@
 			}
 		}
 		
+		static public function addEventListener(type:String, listener:Function):void {
+			_instance.addEventListener(type, listener);
+		}
+		
+		static public function removeEventListener(type:String, listener:Function):void {
+			_instance.removeEventListener(type, listener);
+		}
+		
 		private function createBitmapInfo(sprite:Sprite,info:TurboInfo,snapshotIndex:String):BitmapInfo {
 			var bounds:Rectangle = !info.isBox ? sprite.getBounds(sprite) : info.mcrect;
 			if(!bounds.width || !bounds.height) {
 				return null;
 			}
-			
-			var bitmapInfo:BitmapInfo = new BitmapInfo(info,snapshotIndex,now,new BitmapData(bounds.width,bounds.height,true,0));
-			bitmapInfo.bitmapData.draw(sprite,new Matrix(1,0,0,1,-bounds.left,-bounds.top),sprite.transform.concatenatedColorTransform,null,null,true);
-			cleanDuplicate(bitmapInfo);
+			var bitmapData:BitmapData = new BitmapData(bounds.width,bounds.height,true,0);
+			var colorTransform:ColorTransform = _colorTransformMode==COLORTRANSFORM_MODE_CACHED ? sprite.transform.concatenatedColorTransform : null;
+			bitmapData.draw(sprite,new Matrix(1,0,0,1,-bounds.left,-bounds.top),colorTransform,null,null,true);
+			var bitmapInfo:BitmapInfo = new BitmapInfo(info,snapshotIndex,now,bitmapData,this);
 			bitmapInfo.rect = bounds;
 			info.frames[snapshotIndex] = bitmapInfo;
 			info.count++;
@@ -351,20 +359,20 @@
 				else {
 					bmp = recycle.pop();
 					if(!bmp) {
-						bmp = new TurboBitmap(bitmapInfo.bitmapData,PixelSnapping.AUTO,true,snapshotIndex);
+						bmp = new TurboBitmap(PixelSnapping.AUTO,true,snapshotIndex);
 					}
 				}
 					
 				overlay.addChild(bmp);
-				if(bmp.bitmapData != bitmapInfo.bitmapData)
-					bmp.bitmapData = bitmapInfo.bitmapData;
+				bmp.bitmapData = bitmapInfo.bitmapData;
 				
 				var rect:Rectangle = bitmapInfo.rect;
 				var point:Point = sprite.localToGlobal(rect.topLeft);
-					
-				
 				var transformMatrix:Matrix = sprite.transform.concatenatedMatrix;
 				bmp.transform.matrix = transformMatrix;
+				if(_colorTransformMode) {
+					bmp.transform.colorTransform = sprite.transform.concatenatedColorTransform;
+				}
 				bmp.x = (point.x);
 				bmp.y = (point.y);
 				
@@ -377,7 +385,18 @@
 				(BitmapInfo.globalBitmapCache[bitmapInfo.md5] as GlobalBitmapCache).lastUsed = timestamp; 
 				displayedElements[sprite] = bmp;
 			}
-		}		
+		}
+		
+		static public function replaceBitmap(md5:String,bitmapData:BitmapData):void {
+			var globalCache:GlobalBitmapCache = BitmapInfo.globalBitmapCache[md5];
+			if(!globalCache) {
+				globalCache = new GlobalBitmapCache(bitmapData);
+				BitmapInfo.globalBitmapCache[md5] = globalCache;
+			}
+			else {
+				globalCache.bitmapData = bitmapData;
+			}
+		}
 	}
 }
 
