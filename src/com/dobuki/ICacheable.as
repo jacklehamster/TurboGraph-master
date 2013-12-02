@@ -31,6 +31,8 @@ package com.dobuki
 	 * 		the frame along with the set of clothes (like "frame_1_hat1_shirt2_pants3"). This will ensure that each look will
 	 * 		correspond to a different image
 	 * - The cached MovieClip needs to accomodate for various filters. Then you can add the filter information inside snapshotIndex
+	 * 
+	 * Note: If you pass snapshotIndex as null, the engine will know to never cache the BitmapData
 	 **/
 	public interface ICacheable
 	{

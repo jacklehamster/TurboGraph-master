@@ -44,7 +44,7 @@ package com.dobuki.utils
 		
 		public function reset(bitmapData:BitmapData):void {
 			bitmapInfos = new Vector.<BitmapInfo>();
-			bitmapData = bitmapData;
+			this.bitmapData = bitmapData;
 		}
 	}
 }

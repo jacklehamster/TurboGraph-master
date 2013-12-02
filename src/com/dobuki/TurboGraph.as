@@ -38,6 +38,7 @@ package com.dobuki
 	import flash.geom.Matrix;
 	import flash.geom.Point;
 	import flash.geom.Rectangle;
+	import flash.geom.Transform;
 	import flash.ui.Mouse;
 	import flash.utils.Dictionary;
 	import flash.utils.getTimer;
@@ -68,6 +69,8 @@ package com.dobuki
 	 *  - TurboGraph.replaceBitmap: Lets you replace all instance of an image with a different image (using the md5 hash of the
 	 * 		original image. This is useful if you want to reskin an application but don't want to mess with the Flash assets. You
 	 * 		can just map all bitmaps to a different image.
+	 *  - TurboGraph.cleanUp: Make a pass through and eliminate bitmaps and recoup memory. 
+	 * 		A HARD cleanup removes all bitmaps, while a SOFT cleanup only removes the ones that have not been used for a while.
 	 **/
 	[Event(name="newBitmap", type="flash.events.TurboEvent")]
 	public class TurboGraph extends EventDispatcher
@@ -151,6 +154,7 @@ package com.dobuki
 			_instance.master.addEventListener(Event.ENTER_FRAME,_instance.redraw);
 			_instance.master.addEventListener(Event.RENDER,_instance.loop);
 			_instance.master.visible = !instance._active;
+			_instance.master.addChild(_instance.getTopOverlay(0));
 			active = true;
 		}
 		
@@ -412,10 +416,11 @@ package com.dobuki
 				
 				var rect:Rectangle = bitmapInfo.rect;
 				var point:Point = sprite.localToGlobal(rect.topLeft);
-				var transformMatrix:Matrix = sprite.transform.concatenatedMatrix;
+				var transform:Transform = sprite.transform;
+				var transformMatrix:Matrix = transform.concatenatedMatrix;
 				bmp.transform.matrix = transformMatrix;
-				if(_colorTransformMode) {
-					bmp.transform.colorTransform = sprite.transform.concatenatedColorTransform;
+				if(_colorTransformMode==TurboGraph.COLORTRANSFORM_MODE_DYNAMIC) {
+					bmp.transform.colorTransform = transform.concatenatedColorTransform;
 				}
 				bmp.x = (point.x);
 				bmp.y = (point.y);
