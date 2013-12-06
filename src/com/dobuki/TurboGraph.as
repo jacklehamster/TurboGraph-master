@@ -154,7 +154,7 @@ package com.dobuki
 			_instance.master.addEventListener(Event.ENTER_FRAME,_instance.redraw);
 			_instance.master.addEventListener(Event.RENDER,_instance.loop);
 			_instance.master.visible = !instance._active;
-			_instance.master.addChild(_instance.getTopOverlay(0));
+			_instance.master.stage.addChild(_instance.getTopOverlay(0));
 			active = true;
 		}
 		
@@ -205,7 +205,6 @@ package com.dobuki
 					overlay.removeChildAt(0);
 				}
 			}
-			topOverlays = new<Sprite> [ ];
 			
 			//	clean debug overlay
 			if(_debugOverlay) {
