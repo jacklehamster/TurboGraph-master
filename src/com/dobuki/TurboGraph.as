@@ -25,6 +25,7 @@ package com.dobuki
 	import com.dobuki.utils.TurboBitmap;
 	import com.dobuki.utils.TurboInfo;
 	
+	import flash.display.Bitmap;
 	import flash.display.BitmapData;
 	import flash.display.DisplayObject;
 	import flash.display.DisplayObjectContainer;
@@ -32,6 +33,7 @@ package com.dobuki
 	import flash.display.PixelSnapping;
 	import flash.display.Sprite;
 	import flash.display.Stage;
+	import flash.display.StageQuality;
 	import flash.events.Event;
 	import flash.events.EventDispatcher;
 	import flash.geom.ColorTransform;
@@ -42,8 +44,6 @@ package com.dobuki
 	import flash.ui.Mouse;
 	import flash.utils.Dictionary;
 	import flash.utils.getTimer;
-	
-	import by.blooddy.crypto.MD5;
 
 	/**	▇ ▅ █ ▅ ▇ ▂ ▃ ▁ ▁ ▅ ▃ ▅ ▅ ▄ ▅ ▇ ▇ ▅ █ ▅ ▇ ▂ ▃ ▁ ▁ ▅ ▃ ▅ ▅ ▄ 
 	 **		TURBOGRAPH
@@ -75,6 +75,7 @@ package com.dobuki
 	[Event(name="newBitmap", type="flash.events.TurboEvent")]
 	public class TurboGraph extends EventDispatcher
 	{
+		static private const IMAGESCALE:Number = 2.01;
 		static private const SOFT:String = "soft";
 		static private const HARD:String = "hard";
 		
@@ -97,12 +98,17 @@ package com.dobuki
 		
 		private var recycle:Vector.<TurboBitmap> = new Vector.<TurboBitmap>();
 		private var displayedElements:Dictionary = new Dictionary();
+		private var canDrawWithQuality:Boolean = false;
 		
 		public function TurboGraph()
 		{
 			_instance = this;
 			
 			dico[null] = dico[MovieClip] = dico[Sprite] = TurboInfo.EMPTY;
+			
+			var bmpd:BitmapData = new BitmapData(1,1);
+			canDrawWithQuality = bmpd.hasOwnProperty("drawWithQuality");
+			bmpd.dispose();
 		}
 		
 		private function get stage():Stage {
@@ -369,9 +375,13 @@ package com.dobuki
 			if(!bounds.width || !bounds.height) {
 				return null;
 			}
-			var bitmapData:BitmapData = new BitmapData(bounds.width,bounds.height,true,0);
+			var bitmapData:BitmapData = new BitmapData(bounds.width*IMAGESCALE,bounds.height*IMAGESCALE,true,0);
 			var colorTransform:ColorTransform = _colorTransformMode==COLORTRANSFORM_MODE_CACHED ? sprite.transform.concatenatedColorTransform : null;
-			bitmapData.draw(sprite,new Matrix(1,0,0,1,-bounds.left,-bounds.top),colorTransform,null,null,true);
+			if(canDrawWithQuality) {
+				bitmapData.drawWithQuality(sprite,new Matrix(IMAGESCALE,0,0,IMAGESCALE,-bounds.left*IMAGESCALE,-bounds.top*IMAGESCALE),colorTransform,null,null,true,StageQuality.BEST);
+			}
+			else
+				bitmapData.draw(sprite,new Matrix(IMAGESCALE,0,0,IMAGESCALE,-bounds.left*IMAGESCALE,-bounds.top*IMAGESCALE),colorTransform,null,null,true);
 			var bitmapInfo:BitmapInfo = new BitmapInfo(info,snapshotIndex,now,bitmapData,this);
 			bitmapInfo.rect = bounds;
 			info.frames[snapshotIndex] = bitmapInfo;
@@ -416,7 +426,8 @@ package com.dobuki
 				var rect:Rectangle = bitmapInfo.rect;
 				var point:Point = sprite.localToGlobal(rect.topLeft);
 				var transform:Transform = sprite.transform;
-				var transformMatrix:Matrix = transform.concatenatedMatrix;
+				var transformMatrix:Matrix = transform.concatenatedMatrix.clone();
+				transformMatrix.scale(1/IMAGESCALE,1/IMAGESCALE);
 				bmp.transform.matrix = transformMatrix;
 				if(_colorTransformMode==TurboGraph.COLORTRANSFORM_MODE_DYNAMIC) {
 					bmp.transform.colorTransform = transform.concatenatedColorTransform;
